@@ -321,6 +321,18 @@ final class YtGateway
             }
         }
 
+        if (!isset($map[18]) && isset($s['videoOnly'][360]) && $s['audioOnly'] !== null) {
+            [$tag, $quality, $mime] = self::CLASSIC[360];   // [18, 'medium', ...]
+            $v = $s['videoOnly'][360];
+            $map[18] = [
+            'itag' => 18, 'label' => '360p', 'quality' => 'medium',
+            'height' => 360, 'width' => $v['width'] ?: 640, 'fps' => $v['fps'],
+            'mime' => $mime, 'native' => false,
+            'size' => $v['size'] + $s['audioOnly']['size'],
+            'videoUrl' => $v['url'], 'audioUrl' => $s['audioOnly']['url'],
+            ];
+        }
+
         krsort($map);
         return $map;
     }
