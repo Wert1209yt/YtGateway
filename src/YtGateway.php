@@ -282,7 +282,7 @@ final class YtGateway
         $map = [];
 
         $native18 = $s['muxed'][18] ?? null;
-        if ($native18 !== null) {
+        if ($native18 !== null && !empty($native18['url'])) {
             $map[18] = [
                 'itag' => 18, 'label' => ($native18['height'] ?: 360) . 'p',
                 'quality' => 'medium',
@@ -421,18 +421,46 @@ final class YtGateway
         if (self::$ffmpegBin === '' || !is_executable(self::$ffmpegBin)) {
             self::fail(501, 'ffmpeg not available');
         }
-        if (!$q['videoUrl'] || !$q['audioUrl']) self::fail(404, 'no adaptive streams');
+
+        $maxBytes = 64 * 1024 * 1024;
+
+        $pick = self::pickDownloadable($streams, $q, $maxBytes);
+        if ($pick === null) self::fail(404, 'no downloadable streams');
+
+        [$v, $a] = $pick;
 
         self::ensureCacheDir();
-        $cache = self::cachePath($videoId, $q['itag']);
+       $cache = self::cachePath($videoId, $q['itag']);
 
-        self::buildIfMissing($cache, $streams, $q);
-        @touch($cache);
-
-        self::streamFile($cache);
+       self::buildIfMissing($cache, $streams, $v, $a);
+       @touch($cache);
+       self::streamFile($cache);
     }
 
-    private static function buildIfMissing(string $cache, array $streams, array $q): void
+    private static function pickDownloadable(array $streams, array $q, int $maxBytes): ?array
+    {
+        $audio = $streams['audioOnly'] ?? null;
+        if ($audio === null) return null;
+
+        $heights = array_keys($streams['videoOnly'] ?? []);
+        rsort($heights);
+
+        foreach ($heights as $h) {
+            if ($h > $q['height']) continue;
+            $v = $streams['videoOnly'][$h];
+            if ($v['size'] > 0 && $v['size'] <= $maxBytes) {
+                return [$v, $audio];
+            }
+        }
+
+        $smallest = null;
+        foreach ($streams['videoOnly'] ?? [] as $h => $v) {
+            if ($smallest === null || $v['size'] < $smallest['size']) $smallest = $v;
+        }
+        return $smallest !== null ? [$smallest, $audio] : null;
+    }
+
+    private static function buildIfMissing(string $cache, array $streams, array $v, array $a): void
     {
         if (is_file($cache)) return;
 
@@ -448,11 +476,12 @@ final class YtGateway
             $aTmp = $cache . '.a';
             $out  = $cache . '.part';
 
-            $vLen = (int)($streams['videoOnly'][$q['height']]['size'] ?? 0);
-            $aLen = (int)($streams['audioOnly']['size'] ?? 0);
+            $vLen = (int)($v['size'] ?? 0);
+            $aLen = (int)($a['size'] ?? 0);
 
-            $okV = self::download($q['videoUrl'], $ua, $vTmp, $vLen);
-            $okA = $okV && self::download($q['audioUrl'], $ua, $aTmp, $aLen);
+
+            $okV = self::download($v['url'], $ua, $vTmp, $vLen);
+            $okA = $okV && self::download($a['url'], $ua, $aTmp, $aLen);
 
             if (!$okV || !$okA) {
                 @unlink($vTmp); @unlink($aTmp);
@@ -473,7 +502,7 @@ final class YtGateway
             fclose($lock);
             @unlink($cache . '.lock');
         }
-    }
+     }
 
     private static function download(string $url, string $ua, string $dest, int $total): bool
     {
