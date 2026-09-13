@@ -1,0 +1,21 @@
+{
+    "name": "wert1209yt/ytgateway",
+    "description": "YouTube Streamer for old players with muxed streams",
+    "keywords": ["php", "youtube", "streamer", "oop", "oldyoutube"],
+    "type": "library",
+    "license": "MIT",
+    "authors": [
+        {
+            "name": "Wert1209yt",
+            "email": "timurkokorev12@gmail.com"
+        }
+    ],
+    "autoload": {
+        "psr-4": {
+            "Wert1209yt\\": "src/"
+        }
+    },
+    "require": {
+        "php": ">=8.0"
+    }
+}
