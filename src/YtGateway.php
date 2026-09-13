@@ -423,18 +423,86 @@ final class YtGateway
         }
 
         $maxBytes = 64 * 1024 * 1024;
-
         $pick = self::pickDownloadable($streams, $q, $maxBytes);
         if ($pick === null) self::fail(404, 'no downloadable streams');
 
         [$v, $a] = $pick;
 
         self::ensureCacheDir();
-       $cache = self::cachePath($videoId, $q['itag']);
+        $cache = self::cachePath($videoId, $q['itag']);
 
-       self::buildIfMissing($cache, $streams, $v, $a);
-       @touch($cache);
-       self::streamFile($cache);
+        if (is_file($cache)) {
+            @touch($cache);
+            self::streamFile($cache);
+        }
+
+        self::serveMuxedLive($cache, $streams, $v, $a);
+    }
+    
+    private static function serveMuxedLive(string $cache, array $streams, array $v, array $a): never
+    {
+        @set_time_limit(0);
+        ignore_user_abort(false);
+        self::drain();
+
+        header('Content-Type: video/mp4');
+        header('Accept-Ranges: none');
+        header('X-Accel-Buffering: no');
+        header('Cache-Control: no-store');
+
+        $ua = $streams['ua'];
+
+        $cmd = [
+            self::$ffmpegBin, '-hide_banner', '-loglevel', 'error',
+            '-headers', "User-Agent: {$ua}\r\n",
+            '-i', $v['url'],
+            '-headers', "User-Agent: {$ua}\r\n",
+            '-i', $a['url'],
+            '-map', '0:v:0', '-map', '1:a:0',
+            '-c', 'copy',
+            '-movflags', 'frag_keyframe+empty_moov+default_base_moof',
+            '-f', 'mp4',
+            'pipe:1',
+        ];
+
+        $proc = proc_open($cmd, [
+            1 => ['pipe', 'w'],
+            2 => ['file', '/tmp/yt_mux.log', 'a'],
+        ], $pipes);
+        if (!is_resource($proc)) self::fail(500, 'proc_open failed');
+
+        $cacheFp = @fopen($cache . '.part', 'wb');
+
+        stream_set_blocking($pipes[1], false);
+        $buf = '';
+        while (true) {
+            $chunk = fread($pipes[1], 64 * 1024);
+            if ($chunk !== false && $chunk !== '') {
+                echo $chunk;
+                flush();
+                if ($cacheFp) fwrite($cacheFp, $chunk);
+            } else {
+                if (feof($pipes[1])) break;
+                usleep(20_000);
+            }
+            if (connection_aborted()) {
+                proc_terminate($proc);
+                break;
+            }
+        }
+
+        fclose($pipes[1]);
+        if ($cacheFp) fclose($cacheFp);
+        proc_close($proc);
+
+        if (!connection_aborted() && $cacheFp && is_file($cache . '.part')) {
+            @rename($cache . '.part', $cache);
+            self::prune();
+        } else {
+            @unlink($cache . '.part');
+        }
+
+        exit;
     }
 
     private static function pickDownloadable(array $streams, array $q, int $maxBytes): ?array
