@@ -395,7 +395,6 @@ final class YtGateway
             curl_setopt($ch, CURLOPT_RANGE, $m[1]);
         }
         curl_exec($ch);
-        curl_close($ch);
         return $upstreamCode;
     }
 
@@ -497,7 +496,6 @@ final class YtGateway
             ]);
             $body = curl_exec($ch);
             $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-            curl_close($ch);
 
             if (($code === 206 || $code === 200) && is_string($body) && $body !== '') {
                 return $body;
@@ -643,7 +641,6 @@ final class YtGateway
         ]);
         $res  = curl_exec($ch);
         $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-        curl_close($ch);
 
         if ($code !== 200 || $res === false) return null;
         $d = json_decode($res, true);
