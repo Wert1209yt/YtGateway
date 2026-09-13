@@ -367,10 +367,13 @@ final class YtGateway
                 if ($t === '') return strlen($line);
 
                 if (preg_match('#^HTTP/[\d.]+\s+(\d+)#', $t, $m)) {
-                    $upstreamCode = (int)$m[1];
+                    $code = (int)$m[1];
+                    if ($code < 300 || $code >= 400) {
+                        $upstreamCode = $code;
+                    }
                     return strlen($line);
                 }
-                if ($upstreamCode >= 400) return strlen($line);
+                if ($upstreamCode < 200 || $upstreamCode >= 300) return strlen($line);
 
                 if (!$headersSent && $upstreamCode > 0) {
                     http_response_code($upstreamCode);
