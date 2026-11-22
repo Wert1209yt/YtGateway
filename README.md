@@ -1,6 +1,8 @@
 # YtGateway - get video stream from YouTube!
 
-For first install ffmpeg, ytdlp
+Require:
+  - FFmpeg
+  - Internet with SSL (I think you have it, unless you're from the 90s)
 
 Install:
 ```bash

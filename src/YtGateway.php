@@ -7,10 +7,8 @@ final class YtGateway
 {
     // ─── Settings ─────────────────────────
     public static string $ffmpegBin   = '/usr/bin/ffmpeg';
-    public static string $ytdlpBin    = '/usr/local/bin/yt-dlp';
     public static string $cacheDir    = '';
     public static int    $cacheMaxMb  = 4096;
-    public static int    $ytdlpTimeout = 30;
 
     // ─── InnerTube ───────────────────
     private const IT_KEY     = 'AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8';
@@ -34,6 +32,7 @@ final class YtGateway
 
     /** height => [classicItag, label-player, mime] */
     private const CLASSIC = [
+        144  => [17, 'tiny',   'video/mp4; codecs="avc1.42001E, mp4a.40.2"'],
         240  => [5,  'small',  'video/mp4; codecs="avc1.42001E, mp4a.40.2"'],
         360  => [18, 'medium', 'video/mp4; codecs="avc1.42001E, mp4a.40.2"'],
         480  => [35, 'large',  'video/mp4; codecs="avc1.4D401E, mp4a.40.2"'],
@@ -107,98 +106,10 @@ final class YtGateway
      */
     private static function extractStreams(string $videoId): ?array
     {
-        return self::viaYtDlp($videoId) ?? self::viaInnerTube($videoId);
+        return self::viaInnerTube($videoId);
     }
 
-    // ─── yt-dlp (предпочтительно: полный доступ к adaptive) ────────────────
-    private static function viaYtDlp(string $videoId): ?array
-    {
-        if (self::$ytdlpBin === '' || !is_executable(self::$ytdlpBin)) return null;
-
-        $args = [
-            self::$ytdlpBin, '-J', '--no-warnings', '--no-playlist', '--skip-download',
-            '--socket-timeout', '15',
-            'https://www.youtube.com/watch?v=' . $videoId,
-        ];
-        $proc = @proc_open($args, [1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes);
-        if (!is_resource($proc)) return null;
-
-        stream_set_blocking($pipes[1], false);
-        stream_set_blocking($pipes[2], false);
-
-        $out = '';
-        $deadline = time() + self::$ytdlpTimeout;
-        while (true) {
-            $out .= (string)stream_get_contents($pipes[1]);
-            $st = proc_get_status($proc);
-            if (!$st['running']) break;
-            if (time() > $deadline) { proc_terminate($proc); break; }
-            usleep(50_000);
-        }
-        $out .= (string)stream_get_contents($pipes[1]);
-        fclose($pipes[1]);
-        fclose($pipes[2]);
-        proc_close($proc);
-
-        $j = json_decode($out, true);
-        if (!is_array($j) || empty($j['formats'])) return null;
-
-        $muxed = [];
-        $videoOnly = [];
-        $audioOnly = null;
-        $ua = 'Mozilla/5.0';
-
-        foreach ($j['formats'] as $f) {
-            if (empty($f['url'])) continue;
-            $vc   = $f['vcodec'] ?? 'none';
-            $ac   = $f['acodec'] ?? 'none';
-            $tag  = (int)($f['format_id'] ?? 0);
-            $len  = (int)($f['filesize'] ?? $f['filesize_approx'] ?? 0);
-            if (!empty($f['http_headers']['User-Agent'])) $ua = $f['http_headers']['User-Agent'];
-
-            if ($vc !== 'none' && $ac !== 'none') {
-                // muxed
-                $muxed[$tag] = [
-                    'itag' => $tag, 'url' => $f['url'],
-                    'mime' => $f['mime_type'] ?? 'video/mp4',
-                    'width' => (int)($f['width'] ?? 0), 'height' => (int)($f['height'] ?? 0),
-                    'size' => $len,
-                ];
-            } elseif ($ac === 'none' && str_starts_with($vc, 'avc1')) {
-                $h = (int)($f['height'] ?? 0);
-                if ($h <= 0) continue;
-                $fps = (int)($f['fps'] ?? 30);
-                $cand = [
-                    'itag' => $tag, 'url' => $f['url'], 'height' => $h,
-                    'width' => (int)($f['width'] ?? 0), 'fps' => $fps,
-                    'size' => $len, 'bitrate' => (int)(($f['tbr'] ?? 0) * 1000),
-                    'label' => $h . 'p' . ($fps >= 50 ? $fps : ''),
-                ];
-                $cur = $videoOnly[$h] ?? null;
-                if ($cur === null
-                    || $cand['fps'] > $cur['fps']
-                    || ($cand['fps'] === $cur['fps'] && $cand['bitrate'] > $cur['bitrate'])
-                ) $videoOnly[$h] = $cand;
-            } elseif ($vc === 'none' && str_starts_with($ac, 'mp4a')) {
-                if ((int)($f['audio_channels'] ?? 2) > 2) continue;
-                $br = (int)(($f['tbr'] ?? 0) * 1000);
-                if ($audioOnly === null || $br > $audioOnly['bitrate']) {
-                    $audioOnly = ['itag' => $tag, 'url' => $f['url'],
-                                  'bitrate' => $br, 'size' => $len];
-                }
-            }
-        }
-
-        if (!$muxed && !$videoOnly) return null;
-        krsort($videoOnly);
-
-        return [
-            'ua' => $ua, 'title' => (string)($j['title'] ?? ''),
-            'muxed' => $muxed, 'videoOnly' => $videoOnly, 'audioOnly' => $audioOnly,
-        ];
-    }
-
-    // ─── InnerTube fallback (ANDROID / IOS) ────────────────────────────────
+    // ─── InnerTube (ANDROID / IOS) ────────────────────────────────
     private static function viaInnerTube(string $videoId): ?array
     {
         foreach (self::CLIENTS as $cl) {
@@ -333,7 +244,7 @@ final class YtGateway
             ];
         }
 
-        krsort($map);
+        uasort($map, static fn(array $a, array $b): int => $b['height'] <=> $a['height']);
         return $map;
     }
 
